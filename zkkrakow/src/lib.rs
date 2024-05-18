@@ -39,10 +39,15 @@ struct Aggregator<C: Pairing> {
     hints_agg: Vec<C::G1>,
 }
 
-// Can verify individual and aggregate signatures
+// Verifies aggregated signatures
 struct Verifier<C: Pairing> {
+    /// Committee public key.
+    // Ct = sum(sk_i.L_i(tau)).G1),
+    // over the set of signers, whose shares got verified and aggregated.
+    ct: C::G1,
     g2: C::G2Affine, // G2 generator
     tau_g2: C::G2Affine, // tau.G2
+    z_tau_g2: C::G2Affine, // Z(tau).G2, where Z(X)=X^n-1
 }
 
 // Usual BLS signature, with the public key of the signer
@@ -152,8 +157,13 @@ impl<C: Pairing> GlobalSetup<C> {
         }
     }
 
-    fn verifier(&self) -> Verifier<C> {
-        Verifier { g2: self.g2, tau_g2: self.tau_g2 }
+    fn verifier(&self, ct: C::G1) -> Verifier<C> {
+        Verifier {
+            ct,
+            g2: self.g2,
+            tau_g2: self.tau_g2,
+            z_tau_g2: self.z_tau_g2,
+        }
     }
 }
 
@@ -185,6 +195,10 @@ impl<C: Pairing> Aggregator<C> {
 
 impl<C: Pairing> Verifier<C> {
     fn verify(&self, sig: &Aggregated<C>) -> bool {
+        assert_eq!(
+            C::pairing(self.ct, sig.b_g2),
+            C::pairing(sig.cs, self.g2) + C::pairing(sig.cw, self.z_tau_g2)
+        );
         assert_eq!(
             C::pairing(sig.cs - sig.apk, self.g2),
             C::pairing(sig.q0, self.tau_g2)
@@ -228,7 +242,7 @@ mod tests {
             .collect();
         let aggregator = setup.aggregator(&block);
 
-        let verifier = setup.verifier();
+
 
         // let signer = &signers[1];
         // assert_eq!(
@@ -239,13 +253,9 @@ mod tests {
 
         let c_agg_g1 = signers.iter()
             .map(|s| s.pk.c_g1)
-            .sum::<G1Projective>(); // committee pk
+            .sum::<G1Projective>(); // Committee pk
 
-        // let hints_agg: Vec<_> = (0..n).map(|j| {
-        //     signers.iter()
-        //         .map(|signer_i| signer_i.hints[j])
-        //         .sum::<G1Projective>()
-        // }).collect();
+        let verifier = setup.verifier(c_agg_g1);
 
         let message = G1Projective::rand(rng);
         let sig0 = signers[0].sign(message);
@@ -253,23 +263,6 @@ mod tests {
 
         let agg_sig = aggregator.aggregate(&[sig0, sig2]);
 
-        // let apk = signers[0].pk_g1 + signers[2].pk_g1;
-        // let cs = &signers[0].c_g1 + &signers[2].c_g1;
-        // let b_g2 = setup.lis_g2[0] + setup.lis_g2[2];
-        // let cw = hints_agg[0] + hints_agg[2];
-        //
-        // assert_eq!(
-        //     Bls12_381::pairing(c_agg_g1, b_g2),
-        //     Bls12_381::pairing(cs, setup.g2) + Bls12_381::pairing(cw, setup.z_tau_g2)
-        // );
-        //
-        // let q0 = &signers[0].r_g1 + &signers[2].r_g1;
-
         verifier.verify(&agg_sig);
-
-        // assert_eq!(
-        //     Bls12_381::pairing(cs - apk, setup.g2),
-        //     Bls12_381::pairing(q0, setup.tau_g2)
-        // );
     }
 }
