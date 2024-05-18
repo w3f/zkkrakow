@@ -1,3 +1,4 @@
+use std::iter;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
@@ -5,6 +6,31 @@ use ark_ff::{Field, One, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
+
+struct Srs<C: Pairing> {
+    taus_g1: Vec<C::G1Affine>,
+    taus_g2: Vec<C::G2Affine>,
+}
+
+#[cfg(test)]
+impl<C: Pairing> Srs<C> {
+    fn new_insecure<R: Rng>(log_n: usize, rng: &mut R) -> Self {
+        let n = 1 << log_n;
+        let g1 = C::G1Affine::generator();
+        let g2 = C::G2Affine::generator();
+        let tau = C::ScalarField::rand(rng);
+        let powers_of_tau = iter::successors(Some(C::ScalarField::one()),
+                                             move |prev| Some(tau * prev))
+            .take(n)
+            .collect();
+        let taus_g1 = single_base_msm(&powers_of_tau, g1);
+        let taus_g2 = single_base_msm(&powers_of_tau, g2);
+        Self {
+            taus_g1,
+            taus_g2,
+        }
+    }
+}
 
 // TODO: prepare the G2 points
 // Public protocol parameters, deducible from the max signers' set size and the trapdoor
