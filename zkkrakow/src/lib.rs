@@ -6,6 +6,9 @@ use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
+pub mod availablity;
+pub mod available_signer;
+
 // struct Srs<C: Pairing> {
 //     taus_g1: Vec<C::G1Affine>,
 //     taus_g2: Vec<C::G2Affine>,
@@ -33,7 +36,7 @@ use ark_std::UniformRand;
 
 // TODO: prepare the G2 points
 // Public protocol parameters, deducible from the max signers' set size and the trapdoor
-struct GlobalSetup<C: Pairing> {
+pub struct GlobalSetup<C: Pairing> {
     domain: Radix2EvaluationDomain<C::ScalarField>,
     g1: C::G1Affine, // G1 generator
     g2: C::G2Affine, // G2 generator
@@ -44,7 +47,7 @@ struct GlobalSetup<C: Pairing> {
 }
 
 #[derive(Clone)]
-struct SignerPk<C: Pairing> {
+pub struct SignerPk<C: Pairing> {
     i: usize,
     pk_g1: C::G1,
     pk_g2: C::G2,
@@ -53,13 +56,13 @@ struct SignerPk<C: Pairing> {
     r_g1: C::G1,
 }
 
-struct Signer<C: Pairing> {
+pub struct Signer<C: Pairing> {
     sk: C::ScalarField,
     pk: SignerPk<C>,
     hints: Vec<C::G1>,
 }
 
-struct Aggregator<C: Pairing> {
+pub struct Aggregator<C: Pairing> {
     lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
     hints_agg: Vec<C::G1>,
 }
