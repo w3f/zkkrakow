@@ -24,7 +24,7 @@ struct SignerPk<C: Pairing> {
     pk_g1: C::G1,
     pk_g2: C::G2,
     c_g1: C::G1,
-    c_g2: C::G2,
+    // c_g2: C::G2,
     r_g1: C::G1,
 }
 
@@ -106,7 +106,7 @@ impl<C: Pairing> GlobalSetup<C> {
         let pk_g2 = self.g2 * sk;
         let nsk = self.domain.size_as_field_element * sk;
         let c_g1 = self.lis_g1[i] * nsk;
-        let c_g2 = self.lis_g2[i] * nsk;
+        // let c_g2 = self.lis_g2[i] * nsk;
 
         let mut wi_inv = C::ScalarField::one();
 
@@ -140,7 +140,7 @@ impl<C: Pairing> GlobalSetup<C> {
             pk_g1,
             pk_g2,
             c_g1,
-            c_g2,
+            // c_g2,
             r_g1,
         };
 
@@ -174,8 +174,21 @@ impl<C: Pairing> GlobalSetup<C> {
         }
     }
 
-    // TODO: PoPs
+    // TODO: batch the pairings
     fn verify_pk(&self, pk: &SignerPk<C>) {
+        // 1. PoPs
+        // TODO
+        // 2. DLEQ between the BLS keys in G1 and G2
+        assert_eq!(
+            C::pairing(pk.pk_g1, self.g2),
+            C::pairing(self.g1, pk.pk_g2)
+        );
+        // 3. c_g1 well-formedness
+        assert_eq!(
+            C::pairing(pk.c_g1, self.g2),
+            C::pairing(self.lis_g1[pk.i] * self.domain.size_as_field_element, pk.pk_g2)
+        );
+        // 4. r_g1 well-formedness
         assert_eq!(
             C::pairing(pk.c_g1 - pk.pk_g1, self.g2),
             C::pairing(pk.r_g1, self.tau_g2)
