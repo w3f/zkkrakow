@@ -45,6 +45,7 @@ struct Verifier<C: Pairing> {
     // Ct = sum(sk_i.L_i(tau)).G1),
     // over the set of signers, whose shares got verified and aggregated.
     ct: C::G1,
+    g1: C::G1Affine, // G1 generator
     g2: C::G2Affine, // G2 generator
     tau_g2: C::G2Affine, // tau.G2
     z_tau_g2: C::G2Affine, // Z(tau).G2, where Z(X)=X^n-1
@@ -56,8 +57,14 @@ struct BlsSigWithPk<C: Pairing> {
     pk: SignerPk<C>,
 }
 
+// Aggregate BLS signature together with
+// - the corresponding BLS aggregate public keys (both in G1 and G2),
+// - bitmask indicating the signers, committed to G2
+// - other proof elements
 struct Aggregated<C: Pairing> {
-    apk: C::G1, // usual BLS aggregate public key
+    asig_g1: C::G1, // BLS aggregate signature in G1
+    apk_g1: C::G1, // BLS aggregate public key in G1
+    apk_g2: C::G2, // BLS aggregate public key in G2
     b_g2: C::G2,
     cs: C::G1, // Lagrangian agg pk, sum of signers'
     q0: C::G1,
@@ -160,12 +167,14 @@ impl<C: Pairing> GlobalSetup<C> {
     fn verifier(&self, ct: C::G1) -> Verifier<C> {
         Verifier {
             ct,
+            g1: self.g1,
             g2: self.g2,
             tau_g2: self.tau_g2,
             z_tau_g2: self.z_tau_g2,
         }
     }
 
+    // TODO: PoPs
     fn verify_pk(&self, pk: &SignerPk<C>) {
         assert_eq!(
             C::pairing(pk.c_g1 - pk.pk_g1, self.g2),
@@ -185,13 +194,17 @@ impl<C: Pairing> Signer<C> {
 
 impl<C: Pairing> Aggregator<C> {
     fn aggregate(&self, sigs: &[BlsSigWithPk<C>]) -> Aggregated<C> {
-        let apk = sigs.iter().map(|s| s.pk.pk_g1).sum();
+        let asig_g1 = sigs.iter().map(|s| s.sig).sum();
+        let apk_g1 = sigs.iter().map(|s| s.pk.pk_g1).sum();
+        let apk_g2 = sigs.iter().map(|s| s.pk.pk_g2).sum();
         let cs = sigs.iter().map(|s| s.pk.c_g1).sum();
         let q0 = sigs.iter().map(|s| s.pk.r_g1).sum();
         let b_g2 = sigs.iter().map(|s| self.lis_g2[s.pk.i]).sum();
         let cw = sigs.iter().map(|s| self.hints_agg[s.pk.i]).sum();
         Aggregated {
-            apk,
+            asig_g1,
+            apk_g1,
+            apk_g2,
             b_g2,
             cs,
             q0,
@@ -200,16 +213,29 @@ impl<C: Pairing> Aggregator<C> {
     }
 }
 
+// TODO: batch the pairings
 impl<C: Pairing> Verifier<C> {
-    fn verify(&self, sig: &Aggregated<C>) {
+    fn verify(&self, sig: &Aggregated<C>, message: C::G1) {
         assert_eq!(
             C::pairing(self.ct, sig.b_g2),
             C::pairing(sig.cs, self.g2) + C::pairing(sig.cw, self.z_tau_g2)
         );
+        // KZG verification of s(0) = apk
         assert_eq!(
-            C::pairing(sig.cs - sig.apk, self.g2),
+            C::pairing(sig.cs - sig.apk_g1, self.g2),
             C::pairing(sig.q0, self.tau_g2)
         );
+        // BLS signature verification, for the keys in G2
+        assert_eq!(
+            C::pairing(sig.asig_g1, self.g2),
+            C::pairing(message, sig.apk_g2)
+        );
+        // DLEQ proof between APKs in G1 and G2
+        assert_eq!(
+            C::pairing(sig.apk_g1, self.g2),
+            C::pairing(self.g1, sig.apk_g2)
+        );
+        // TODO: the degree check
     }
 }
 
@@ -262,6 +288,6 @@ mod tests {
 
         let agg_sig = aggregator.aggregate(&[sig0, sig2]);
 
-        verifier.verify(&agg_sig);
+        verifier.verify(&agg_sig, message);
     }
 }
