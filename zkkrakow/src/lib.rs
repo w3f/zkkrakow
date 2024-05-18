@@ -165,6 +165,13 @@ impl<C: Pairing> GlobalSetup<C> {
             z_tau_g2: self.z_tau_g2,
         }
     }
+
+    fn verify_pk(&self, pk: &SignerPk<C>) {
+        assert_eq!(
+            C::pairing(pk.c_g1 - pk.pk_g1, self.g2),
+            C::pairing(pk.r_g1, self.tau_g2)
+        );
+    }
 }
 
 impl<C: Pairing> Signer<C> {
@@ -194,7 +201,7 @@ impl<C: Pairing> Aggregator<C> {
 }
 
 impl<C: Pairing> Verifier<C> {
-    fn verify(&self, sig: &Aggregated<C>) -> bool {
+    fn verify(&self, sig: &Aggregated<C>) {
         assert_eq!(
             C::pairing(self.ct, sig.b_g2),
             C::pairing(sig.cs, self.g2) + C::pairing(sig.cw, self.z_tau_g2)
@@ -203,7 +210,6 @@ impl<C: Pairing> Verifier<C> {
             C::pairing(sig.cs - sig.apk, self.g2),
             C::pairing(sig.q0, self.tau_g2)
         );
-        return true;
     }
 }
 
@@ -231,25 +237,18 @@ mod tests {
         let log_n = 2;
         let setup = GlobalSetup::<Bls12_381>::setup(log_n, rng);
         let n = setup.domain.size();
-        assert_eq!(1 << log_n, n);
+
         let signers: Vec<_> = (0..n)
             .map(|i| setup.signer(i, rng))
             .collect();
+
+        signers.iter().for_each(|s| setup.verify_pk(&s.pk));
 
         // Let's assume that all the hints arrived...
         let block: Vec<_> = signers.iter()
             .map(|s| s.hints.clone())
             .collect();
         let aggregator = setup.aggregator(&block);
-
-
-
-        // let signer = &signers[1];
-        // assert_eq!(
-        //     Bls12_381::pairing(signer.c_g1 - signer.pk_g1, setup.g2),
-        //     Bls12_381::pairing(signer.r_g1, setup.tau_g2)
-        // );
-
 
         let c_agg_g1 = signers.iter()
             .map(|s| s.pk.c_g1)
