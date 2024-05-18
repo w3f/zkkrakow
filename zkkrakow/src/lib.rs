@@ -1,4 +1,3 @@
-use std::iter;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
@@ -7,30 +6,30 @@ use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
-struct Srs<C: Pairing> {
-    taus_g1: Vec<C::G1Affine>,
-    taus_g2: Vec<C::G2Affine>,
-}
-
-#[cfg(test)]
-impl<C: Pairing> Srs<C> {
-    fn new_insecure<R: Rng>(log_n: usize, rng: &mut R) -> Self {
-        let n = 1 << log_n;
-        let g1 = C::G1Affine::generator();
-        let g2 = C::G2Affine::generator();
-        let tau = C::ScalarField::rand(rng);
-        let powers_of_tau = iter::successors(Some(C::ScalarField::one()),
-                                             move |prev| Some(tau * prev))
-            .take(n)
-            .collect();
-        let taus_g1 = single_base_msm(&powers_of_tau, g1);
-        let taus_g2 = single_base_msm(&powers_of_tau, g2);
-        Self {
-            taus_g1,
-            taus_g2,
-        }
-    }
-}
+// struct Srs<C: Pairing> {
+//     taus_g1: Vec<C::G1Affine>,
+//     taus_g2: Vec<C::G2Affine>,
+// }
+//
+// #[cfg(test)]
+// impl<C: Pairing> Srs<C> {
+//     fn new_insecure<R: Rng>(log_n: usize, rng: &mut R) -> Self {
+//         let n = 1 << log_n;
+//         let g1 = C::G1Affine::generator();
+//         let g2 = C::G2Affine::generator();
+//         let tau = C::ScalarField::rand(rng);
+//         let powers_of_tau = iter::successors(Some(C::ScalarField::one()),
+//                                              move |prev| Some(tau * prev))
+//             .take(n)
+//             .collect();
+//         let taus_g1 = single_base_msm(&powers_of_tau, g1);
+//         let taus_g2 = single_base_msm(&powers_of_tau, g2);
+//         Self {
+//             taus_g1,
+//             taus_g2,
+//         }
+//     }
+// }
 
 // TODO: prepare the G2 points
 // Public protocol parameters, deducible from the max signers' set size and the trapdoor
@@ -50,7 +49,7 @@ struct SignerPk<C: Pairing> {
     pk_g1: C::G1,
     pk_g2: C::G2,
     c_g1: C::G1,
-    // c_g2: C::G2,
+    c_g2: C::G2,
     r_g1: C::G1,
 }
 
@@ -132,7 +131,7 @@ impl<C: Pairing> GlobalSetup<C> {
         let pk_g2 = self.g2 * sk;
         let nsk = self.domain.size_as_field_element * sk;
         let c_g1 = self.lis_g1[i] * nsk;
-        // let c_g2 = self.lis_g2[i] * nsk;
+        let c_g2 = self.lis_g2[i] * nsk;
 
         let mut wi_inv = C::ScalarField::one();
 
@@ -166,7 +165,7 @@ impl<C: Pairing> GlobalSetup<C> {
             pk_g1,
             pk_g2,
             c_g1,
-            // c_g2,
+            c_g2,
             r_g1,
         };
 
@@ -209,15 +208,37 @@ impl<C: Pairing> GlobalSetup<C> {
             C::pairing(pk.pk_g1, self.g2),
             C::pairing(self.g1, pk.pk_g2)
         );
-        // 3. c_g1 well-formedness
+        // 3. DLEQ between c_g1 and c_g2
+        assert_eq!(
+            C::pairing(pk.c_g1, self.g2),
+            C::pairing(self.g1, pk.c_g2)
+        );
+        // 4. c_g1 well-formedness
         assert_eq!(
             C::pairing(pk.c_g1, self.g2),
             C::pairing(self.lis_g1[pk.i] * self.domain.size_as_field_element, pk.pk_g2)
         );
-        // 4. r_g1 well-formedness
+        // 5. r_g1 well-formedness
         assert_eq!(
             C::pairing(pk.c_g1 - pk.pk_g1, self.g2),
             C::pairing(pk.r_g1, self.tau_g2)
+        );
+    }
+
+    // TODO: batch the pairings
+    fn verify_shares(&self, shares: &[C::G1], pk: &SignerPk<C>) {
+        for j in 0..self.domain.size() {
+            if j == pk.i {
+                continue;
+            }
+            assert_eq!(
+                C::pairing(shares[j], self.z_tau_g2),
+                C::pairing(self.lis_g1[j], pk.c_g2)
+            );
+        }
+        assert_eq!(
+            C::pairing(shares[pk.i], self.z_tau_g2),
+            C::pairing(self.lis_g1[pk.i].into_group() - self.g1, pk.c_g2)
         );
     }
 }
@@ -308,6 +329,7 @@ mod tests {
             .collect();
 
         signers.iter().for_each(|s| setup.verify_pk(&s.pk));
+        signers.iter().for_each(|s| setup.verify_shares(&s.hints, &s.pk));
 
         // Let's assume that all the hints arrived...
         let block: Vec<_> = signers.iter()
