@@ -40,7 +40,7 @@ impl ClueAvailablifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-        use ark_bls12_381::{Bls12_381, G1Projective};
+    use ark_bls12_381::{Bls12_381, G1Projective};
     use ark_std::{test_rng, UniformRand};
 
 #[tokio::test]
@@ -57,10 +57,6 @@ async fn make_available_signers_work ()
 
     let available_signer = clue_availer.make_available_signer(setup, 0, rng).await;
     println!("signer {} is available at {:x?}", 0, available_signer.1);
-
-        // let signers: Vec<_> = (0..1)
-        //     .map(|i| setup.signer(i, rng))
-        // .collect();
 
 }
 }

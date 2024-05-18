@@ -1,14 +1,16 @@
+use ark_std::iter;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ff::{Field, One, PrimeField, Zero};
-use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, Evaluations, Polynomial, Radix2EvaluationDomain};
+use ark_poly::univariate::DensePolynomial;
 use ark_std::rand::Rng;
-use ark_std::UniformRand;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 pub mod availablity;
 pub mod available_signer;
+use ark_std::{test_rng, UniformRand};
 
 // struct Srs<C: Pairing> {
 //     taus_g1: Vec<C::G1Affine>,
@@ -45,6 +47,7 @@ pub struct GlobalSetup<C: Pairing> {
     z_tau_g2: C::G2Affine, // Z(tau).G2, where Z(X)=X^n-1
     lis_g1: Vec<C::G1Affine>, // L_i(tau).G1
     lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
+    taus_g1: Vec<C::G1Affine>, // tau^i.G1
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -63,13 +66,16 @@ pub struct Signer<C: Pairing> {
     hints: Vec<C::G1>,
 }
 
-pub struct Aggregator<C: Pairing> {
+struct Aggregator<C: Pairing> {
+    domain: Radix2EvaluationDomain<C::ScalarField>,
     lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
+    taus_g1: Vec<C::G1Affine>, // tau^i.G1
     hints_agg: Vec<C::G1>,
 }
 
 // Verifies aggregated signatures
 struct Verifier<C: Pairing> {
+    domain: Radix2EvaluationDomain<C::ScalarField>,
     /// Committee public key.
     // Ct = sum(sk_i.L_i(tau)).G1),
     // over the set of signers, whose shares got verified and aggregated.
@@ -95,9 +101,14 @@ struct Aggregated<C: Pairing> {
     apk_g1: C::G1, // BLS aggregate public key in G1
     apk_g2: C::G2, // BLS aggregate public key in G2
     b_g2: C::G2,
-    cs: C::G1, // Lagrangian agg pk, sum of signers'
+    cs: C::G1,
     q0: C::G1,
     cw: C::G1,
+
+    // bitmask verification
+    b: Vec<bool>, // bitmask
+    z: C::ScalarField, //evaluation point //TODO: that should be a Fiat-Shamir point ofc
+    cqb: C::G1, // KZG proof of b(z)=?
 }
 
 impl<C: Pairing> GlobalSetup<C> {
@@ -116,6 +127,12 @@ impl<C: Pairing> GlobalSetup<C> {
         let lis_g1 = single_base_msm(&lis_at_tau, g1.into_group());
         let lis_g2 = single_base_msm(&lis_at_tau, g2.into_group());
 
+        let powers_of_tau: Vec<_> = iter::successors(Some(C::ScalarField::one()),
+                                             move |prev| Some(tau * prev))
+            .take(n as usize)
+            .collect();
+        let taus_g1 = single_base_msm(&powers_of_tau, g1.into_group());
+
         Self {
             domain,
             g1,
@@ -124,6 +141,7 @@ impl<C: Pairing> GlobalSetup<C> {
             z_tau_g2,
             lis_g1,
             lis_g2,
+            taus_g1,
         }
     }
 
@@ -188,13 +206,16 @@ impl<C: Pairing> GlobalSetup<C> {
                 .sum::<C::G1>()
         }).collect();
         Aggregator {
+            domain: self.domain,
             lis_g2: self.lis_g2.clone(),
+            taus_g1: self.taus_g1.clone(),
             hints_agg,
         }
     }
 
     fn verifier(&self, ct: C::G1) -> Verifier<C> {
         Verifier {
+            domain: self.domain,
             ct,
             g1: self.g1,
             g2: self.g2,
@@ -257,6 +278,7 @@ impl<C: Pairing> Signer<C> {
 }
 
 impl<C: Pairing> Aggregator<C> {
+    // TODO: should probably verify the sigs first?
     fn aggregate(&self, sigs: &[BlsSigWithPk<C>]) -> Aggregated<C> {
         let asig_g1 = sigs.iter().map(|s| s.sig).sum();
         let apk_g1 = sigs.iter().map(|s| s.pk.pk_g1).sum();
@@ -265,6 +287,21 @@ impl<C: Pairing> Aggregator<C> {
         let q0 = sigs.iter().map(|s| s.pk.r_g1).sum();
         let b_g2 = sigs.iter().map(|s| self.lis_g2[s.pk.i]).sum();
         let cw = sigs.iter().map(|s| self.hints_agg[s.pk.i]).sum();
+
+        let mut b = vec![false; self.lis_g2.len()];
+        for s in sigs {
+            b[s.pk.i] = true;
+        }
+
+        let z = C::ScalarField::rand(&mut test_rng());
+        let bf: Vec<_> = b.iter().map(|&b|
+            if b { C::ScalarField::one() } else { C::ScalarField::zero() }
+        ).collect();
+        let bf = Evaluations::from_vec_and_domain(bf, self.domain);
+        let bp = bf.interpolate();
+        let qb = &bp / &DensePolynomial::from_coefficients_slice(&[-z, C::ScalarField::one()]);
+        let cqb = C::G1::msm_unchecked(&self.taus_g1, &qb.coeffs);
+
         Aggregated {
             asig_g1,
             apk_g1,
@@ -273,6 +310,9 @@ impl<C: Pairing> Aggregator<C> {
             cs,
             q0,
             cw,
+            b,
+            z,
+            cqb,
         }
     }
 }
@@ -280,6 +320,7 @@ impl<C: Pairing> Aggregator<C> {
 // TODO: batch the pairings
 impl<C: Pairing> Verifier<C> {
     fn verify(&self, sig: &Aggregated<C>, message: C::G1) {
+        assert_eq!(self.domain.size(), sig.b.len());
         assert_eq!(
             C::pairing(self.ct, sig.b_g2),
             C::pairing(sig.cs, self.g2) + C::pairing(sig.cw, self.z_tau_g2)
@@ -299,6 +340,20 @@ impl<C: Pairing> Verifier<C> {
             C::pairing(sig.apk_g1, self.g2),
             C::pairing(self.g1, sig.apk_g2)
         );
+
+
+        // bitmask verification
+        let lis = self.domain.evaluate_all_lagrange_coefficients(sig.z);
+        let b_at_z = lis.iter()
+            .zip(sig.b.iter())
+            .filter_map(|(li, b)| b.then_some(li))
+            .sum::<C::ScalarField>();
+        // KZG verification of b(z) = b_at_z
+        assert_eq!(
+            C::pairing(self.g1, sig.b_g2 - self.g2 * b_at_z),
+            C::pairing(sig.cqb, self.tau_g2.into_group() - self.g2 * sig.z)
+        );
+
         // TODO: the degree check
     }
 }
