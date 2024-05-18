@@ -4,34 +4,34 @@ use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::{test_rng, UniformRand};
+use ark_std::rand::Rng;
 
-// TODO: prepare thew points
+// TODO: prepare the G2 points
 struct GlobalSetup<C: Pairing> {
-    /// Maximal number of signers.
-    // n: C::ScalarField,
     domain: Radix2EvaluationDomain<C::ScalarField>,
-    g1: C::G1Affine,
-    g2: C::G2Affine,
-    tau_g2: C::G2Affine,
-    z_tau_g2: C::G2Affine, //Z(tau).G2, where Z(X)=X^n-1
-    lis_g1: Vec<C::G1Affine>,
-    lis_g2: Vec<C::G2Affine>,
+    g1: C::G1Affine, // G1 generator
+    g2: C::G2Affine, // G2 generator
+    tau_g2: C::G2Affine, // tau.G2
+    z_tau_g2: C::G2Affine, // Z(tau).G2, where Z(X)=X^n-1
+    lis_g1: Vec<C::G1Affine>, // L_i(tau).G1
+    lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
 }
 
 impl<C: Pairing> GlobalSetup<C> {
-    fn setup(log_n: usize) -> Self { //todo: rng
+    fn setup<R: Rng>(log_n: usize, rng: &mut R) -> Self {
+        let n = 1 << log_n;
+
         let g1 = C::G1Affine::generator();
         let g2 = C::G2Affine::generator();
 
-        let tau = C::ScalarField::rand(&mut test_rng());
+        let tau = C::ScalarField::rand(rng);
         let tau_g2 = (g2 * tau).into_affine();
-        let n = 1 << log_n;
         let z_tau_g2 = (g2 * (tau.pow(&[n]) - C::ScalarField::one())).into_affine();
 
         let domain = Radix2EvaluationDomain::new(n as usize).unwrap();
         let lis_at_tau = domain.evaluate_all_lagrange_coefficients(tau);
-        let lis_g1 = single_base_msm(&lis_at_tau, g1.into_group()); // L_i(tau).G1
-        let lis_g2 = single_base_msm(&lis_at_tau, g2.into_group()); // L_i(tau).G2
+        let lis_g1 = single_base_msm(&lis_at_tau, g1.into_group());
+        let lis_g2 = single_base_msm(&lis_at_tau, g2.into_group());
 
         Self {
             domain,
@@ -48,8 +48,8 @@ impl<C: Pairing> GlobalSetup<C> {
 struct Signer<C: Pairing> {
     i: usize,
     sk: C::ScalarField,
-    pk_g1: C::G1, // todo: affine
-    pk_g2: C::G2, // todo: affine
+    pk_g1: C::G1,
+    pk_g2: C::G2,
     c_g1: C::G1,
     c_g2: C::G2,
     r_g1: C::G1,
@@ -57,10 +57,10 @@ struct Signer<C: Pairing> {
 }
 
 impl<C: Pairing> GlobalSetup<C> {
-    fn signer(&self, i: usize) -> Signer<C> { //TODO
+    fn signer<R: Rng>(&self, i: usize, rng: &mut R) -> Signer<C> {
         let n = self.domain.size();
         let w = self.domain.group_gen;
-        let sk = C::ScalarField::rand(&mut test_rng());
+        let sk = C::ScalarField::rand(rng);
         let pk_g1 = self.g1 * sk;
         let pk_g2 = self.g2 * sk;
         let nsk = self.domain.size_as_field_element * sk;
@@ -70,13 +70,12 @@ impl<C: Pairing> GlobalSetup<C> {
         let mut wi_inv = C::ScalarField::one();
 
         let r_coeffs: Vec<_> = (0..n).map(|_| {
-            let z = sk * wi_inv;
+            let c = sk * wi_inv;
             wi_inv = wi_inv * self.domain.group_gen_inv;
-            -z
+            -c
         }).collect();
-        let r = C::G1::msm(&self.lis_g1, &r_coeffs).unwrap();
-
-        let r_g1 = r + c_g1 * w.pow(&[self.domain.size - i as u64]);
+        let r_g1 = C::G1::msm(&self.lis_g1, &r_coeffs).unwrap();
+        let r_g1 = r_g1 + c_g1 * w.pow(&[self.domain.size - i as u64]);
 
         let mut hints = vec![C::G1::zero(); n];
         let wi = w.pow(&[i as u64]);
@@ -86,17 +85,14 @@ impl<C: Pairing> GlobalSetup<C> {
                 wj = wj * w;
                 continue;
             }
-            assert!(i != j, "i = {}, j = {}", i, j);
-            assert!(wi != wj, "i = {}, j = {}", i, j);
-            let denom = (self.domain.size_as_field_element * (wi - wj)).inverse().unwrap();
-            let a = wj * denom;
-            let b = wi * denom;
-            hints[j] = self.lis_g1[i] * a + self.lis_g1[i] * b;
+            let c = sk * (wi - wj).inverse().unwrap();
+            let a = wj * c;
+            let b = wi * c;
+            hints[j] = self.lis_g1[i] * a - self.lis_g1[j] * b;
             wj = wj * w;
         }
         let hint_i = -hints.iter().sum::<C::G1>();
         hints[i] = hint_i;
-
 
         Signer {
             i,
@@ -127,12 +123,14 @@ mod tests {
 
     #[test]
     fn it_works() {
+        let rng = &mut test_rng();
+
         let log_n = 2;
-        let setup = GlobalSetup::<Bls12_381>::setup(log_n);
+        let setup = GlobalSetup::<Bls12_381>::setup(log_n, rng);
         let n = setup.domain.size();
         assert_eq!(1 << log_n, n);
         let signers: Vec<_> = (0..n)
-            .map(|i| setup.signer(i))
+            .map(|i| setup.signer(i, rng))
             .collect();
 
         let signer = &signers[1];
@@ -141,9 +139,10 @@ mod tests {
             Bls12_381::pairing(signer.r_g1, setup.tau_g2)
         );
 
-
         // let's assume that all the hints arrived
-        let c_agg_g1 = signers.iter().map(|s| s.c_g1).sum::<G1Projective>(); // comittee pk
+        let c_agg_g1 = signers.iter()
+            .map(|s| s.c_g1)
+            .sum::<G1Projective>(); // committee pk
 
         let hints_agg: Vec<_> = (0..n).map(|j| {
             signers.iter()
@@ -151,7 +150,7 @@ mod tests {
                 .sum::<G1Projective>()
         }).collect();
 
-        let message = G1Affine::rand(&mut test_rng());
+        let message = G1Affine::rand(rng);
         let sig0 = message * &signers[0].sk;
         let sig2 = message * &signers[2].sk;
         let apk = signers[0].pk_g1 + signers[2].pk_g1;
