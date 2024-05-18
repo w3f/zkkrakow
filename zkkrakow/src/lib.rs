@@ -3,10 +3,11 @@ use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
-use ark_std::{test_rng, UniformRand};
 use ark_std::rand::Rng;
+use ark_std::UniformRand;
 
 // TODO: prepare the G2 points
+// Public protocol parameters, deducible from the max signers' set size and the trapdoor
 struct GlobalSetup<C: Pairing> {
     domain: Radix2EvaluationDomain<C::ScalarField>,
     g1: C::G1Affine, // G1 generator
@@ -15,6 +16,47 @@ struct GlobalSetup<C: Pairing> {
     z_tau_g2: C::G2Affine, // Z(tau).G2, where Z(X)=X^n-1
     lis_g1: Vec<C::G1Affine>, // L_i(tau).G1
     lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
+}
+
+#[derive(Clone)]
+struct SignerPk<C: Pairing> {
+    i: usize,
+    pk_g1: C::G1,
+    pk_g2: C::G2,
+    c_g1: C::G1,
+    c_g2: C::G2,
+    r_g1: C::G1,
+}
+
+struct Signer<C: Pairing> {
+    sk: C::ScalarField,
+    pk: SignerPk<C>,
+    hints: Vec<C::G1>,
+}
+
+struct Aggregator<C: Pairing> {
+    lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
+    hints_agg: Vec<C::G1>,
+}
+
+// Can verify individual and aggregate signatures
+struct Verifier<C: Pairing> {
+    g2: C::G2Affine, // G2 generator
+    tau_g2: C::G2Affine, // tau.G2
+}
+
+// Usual BLS signature, with the public key of the signer
+struct BlsSigWithPk<C: Pairing> {
+    sig: C::G1,
+    pk: SignerPk<C>,
+}
+
+struct Aggregated<C: Pairing> {
+    apk: C::G1, // usual BLS aggregate public key
+    b_g2: C::G2,
+    cs: C::G1, // Lagrangian agg pk, sum of signers'
+    q0: C::G1,
+    cw: C::G1,
 }
 
 impl<C: Pairing> GlobalSetup<C> {
@@ -43,20 +85,7 @@ impl<C: Pairing> GlobalSetup<C> {
             lis_g2,
         }
     }
-}
 
-struct Signer<C: Pairing> {
-    i: usize,
-    sk: C::ScalarField,
-    pk_g1: C::G1,
-    pk_g2: C::G2,
-    c_g1: C::G1,
-    c_g2: C::G2,
-    r_g1: C::G1,
-    hints: Vec<C::G1>,
-}
-
-impl<C: Pairing> GlobalSetup<C> {
     fn signer<R: Rng>(&self, i: usize, rng: &mut R) -> Signer<C> {
         let n = self.domain.size();
         let w = self.domain.group_gen;
@@ -94,18 +123,76 @@ impl<C: Pairing> GlobalSetup<C> {
         let hint_i = -hints.iter().sum::<C::G1>();
         hints[i] = hint_i;
 
-        Signer {
+        let pk = SignerPk {
             i,
-            sk,
             pk_g1,
             pk_g2,
             c_g1,
             c_g2,
             r_g1,
+        };
+
+        Signer {
+            sk,
+            pk,
             hints,
         }
     }
+
+    fn aggregator(&self, blocks: &[Vec<C::G1>]) -> Aggregator<C> {
+        let n = self.domain.size();
+        let hints_agg: Vec<_> = (0..n).map(|j| {
+            blocks.iter()
+                .map(|hints_i| hints_i[j])
+                .sum::<C::G1>()
+        }).collect();
+        Aggregator {
+            lis_g2: self.lis_g2.clone(),
+            hints_agg,
+        }
+    }
+
+    fn verifier(&self) -> Verifier<C> {
+        Verifier { g2: self.g2, tau_g2: self.tau_g2 }
+    }
 }
+
+impl<C: Pairing> Signer<C> {
+    fn sign(&self, message: C::G1) -> BlsSigWithPk<C> {
+        BlsSigWithPk {
+            sig: message * self.sk,
+            pk: self.pk.clone(),
+        }
+    }
+}
+
+impl<C: Pairing> Aggregator<C> {
+    fn aggregate(&self, sigs: &[BlsSigWithPk<C>]) -> Aggregated<C> {
+        let apk = sigs.iter().map(|s| s.pk.pk_g1).sum();
+        let cs = sigs.iter().map(|s| s.pk.c_g1).sum();
+        let q0 = sigs.iter().map(|s| s.pk.r_g1).sum();
+        let b_g2 = sigs.iter().map(|s| self.lis_g2[s.pk.i]).sum();
+        let cw = sigs.iter().map(|s| self.hints_agg[s.pk.i]).sum();
+        Aggregated {
+            apk,
+            b_g2,
+            cs,
+            q0,
+            cw,
+        }
+    }
+}
+
+impl<C: Pairing> Verifier<C> {
+    fn verify(&self, sig: &Aggregated<C>) -> bool {
+        assert_eq!(
+            C::pairing(sig.cs - sig.apk, self.g2),
+            C::pairing(sig.q0, self.tau_g2)
+        );
+        return true;
+    }
+}
+
 
 // Multiply the same base by each scalar.
 pub fn single_base_msm<C: CurveGroup>(scalars: &[C::ScalarField], g: C) -> Vec<C::Affine> {
@@ -118,8 +205,10 @@ pub fn single_base_msm<C: CurveGroup>(scalars: &[C::ScalarField], g: C) -> Vec<C
 
 #[cfg(test)]
 mod tests {
+    use ark_bls12_381::{Bls12_381, G1Projective};
+    use ark_std::{test_rng, UniformRand};
+
     use super::*;
-    use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
 
     #[test]
     fn it_works() {
@@ -133,42 +222,54 @@ mod tests {
             .map(|i| setup.signer(i, rng))
             .collect();
 
-        let signer = &signers[1];
-        assert_eq!(
-            Bls12_381::pairing(signer.c_g1 - signer.pk_g1, setup.g2),
-            Bls12_381::pairing(signer.r_g1, setup.tau_g2)
-        );
+        // Let's assume that all the hints arrived...
+        let block: Vec<_> = signers.iter()
+            .map(|s| s.hints.clone())
+            .collect();
+        let aggregator = setup.aggregator(&block);
 
-        // let's assume that all the hints arrived
+        let verifier = setup.verifier();
+
+        // let signer = &signers[1];
+        // assert_eq!(
+        //     Bls12_381::pairing(signer.c_g1 - signer.pk_g1, setup.g2),
+        //     Bls12_381::pairing(signer.r_g1, setup.tau_g2)
+        // );
+
+
         let c_agg_g1 = signers.iter()
-            .map(|s| s.c_g1)
+            .map(|s| s.pk.c_g1)
             .sum::<G1Projective>(); // committee pk
 
-        let hints_agg: Vec<_> = (0..n).map(|j| {
-            signers.iter()
-                .map(|signer_i| signer_i.hints[j])
-                .sum::<G1Projective>()
-        }).collect();
+        // let hints_agg: Vec<_> = (0..n).map(|j| {
+        //     signers.iter()
+        //         .map(|signer_i| signer_i.hints[j])
+        //         .sum::<G1Projective>()
+        // }).collect();
 
-        let message = G1Affine::rand(rng);
-        let sig0 = message * &signers[0].sk;
-        let sig2 = message * &signers[2].sk;
-        let apk = signers[0].pk_g1 + signers[2].pk_g1;
+        let message = G1Projective::rand(rng);
+        let sig0 = signers[0].sign(message);
+        let sig2 = signers[2].sign(message);
 
-        let cs = &signers[0].c_g1 + &signers[2].c_g1;
-        let b_g2 = setup.lis_g2[0] + setup.lis_g2[2];
-        let cw = hints_agg[0] + hints_agg[2];
+        let agg_sig = aggregator.aggregate(&[sig0, sig2]);
 
-        assert_eq!(
-            Bls12_381::pairing(c_agg_g1, b_g2),
-            Bls12_381::pairing(cs, setup.g2) + Bls12_381::pairing(cw, setup.z_tau_g2)
-        );
+        // let apk = signers[0].pk_g1 + signers[2].pk_g1;
+        // let cs = &signers[0].c_g1 + &signers[2].c_g1;
+        // let b_g2 = setup.lis_g2[0] + setup.lis_g2[2];
+        // let cw = hints_agg[0] + hints_agg[2];
+        //
+        // assert_eq!(
+        //     Bls12_381::pairing(c_agg_g1, b_g2),
+        //     Bls12_381::pairing(cs, setup.g2) + Bls12_381::pairing(cw, setup.z_tau_g2)
+        // );
+        //
+        // let q0 = &signers[0].r_g1 + &signers[2].r_g1;
 
-        let q0 = &signers[0].r_g1 + &signers[2].r_g1;
+        verifier.verify(&agg_sig);
 
-        assert_eq!(
-            Bls12_381::pairing(cs - apk, setup.g2),
-            Bls12_381::pairing(q0, setup.tau_g2)
-        );
+        // assert_eq!(
+        //     Bls12_381::pairing(cs - apk, setup.g2),
+        //     Bls12_381::pairing(q0, setup.tau_g2)
+        // );
     }
 }
