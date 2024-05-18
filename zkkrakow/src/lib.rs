@@ -5,6 +5,7 @@ use ark_ff::{Field, One, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 pub mod availablity;
 pub mod available_signer;
@@ -46,7 +47,7 @@ pub struct GlobalSetup<C: Pairing> {
     lis_g2: Vec<C::G2Affine>, // L_i(tau).G2
 }
 
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SignerPk<C: Pairing> {
     i: usize,
     pk_g1: C::G1,
