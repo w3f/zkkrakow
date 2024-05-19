@@ -51,7 +51,7 @@ mod tests {
 
         let n = setup.domain.size();
 
-        let clue_availer = ClueAvailablifier::initialize("worth apart cage head yard argue usage guilt cigar sting flag dance".to_string()).await;
+        let clue_availer = ClueAvailablifier::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string()).await;
 
         let available_signer = clue_availer.make_available_signer(setup, 0, rng).await;
         println!("signer {} is available at {:x?}", 0, available_signer.1);

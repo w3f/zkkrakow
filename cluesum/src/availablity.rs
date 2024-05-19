@@ -66,14 +66,14 @@ mod tests {
     use super::*;
 
     async fn test_submit_to_avail() {
-        let test_availablity_net = AvailabilityBackend::initialize("worth apart cage head yard argue usage guilt cigar sting flag dance".to_string());
+        let test_availablity_net = AvailabilityBackend::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string());
         let block_hash = test_availablity_net.await.submit_data("Thu shalt remember us!".into()).await;
         println!("block hash: {}", block_hash);
     }
 
     #[tokio::test]
     async fn test_connection_to_avilability_network() {
-        let test_availablity_net = AvailabilityBackend::initialize("worth apart cage head yard argue usage guilt cigar sting flag dance".to_string()).await;
+        let test_availablity_net = AvailabilityBackend::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string()).await;
         println!("provider id: {}", test_availablity_net.provider_account_id);
     }
 
@@ -84,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieving_available_data_works() {
-        let test_availablity_net = AvailabilityBackend::initialize("worth apart cage head yard argue usage guilt cigar sting flag dance".to_string()).await;
+        let test_availablity_net = AvailabilityBackend::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string()).await;
         let block_hash: [u8; 32] = array_bytes::hex2bytes_unchecked("43a01cce887163530ccf6904d46bae9afa795caff947e37a19558e71a1fba3e2").try_into().unwrap();
         let block_hash = H256::from(block_hash);
         let data = test_availablity_net.retrieve_data(block_hash).await;
