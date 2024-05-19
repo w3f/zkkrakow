@@ -8,13 +8,13 @@ use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 const PUB_KEY_SERIALIZED_SIZE: usize = 368; //(+ (* 3 48) (* 2 96) 32)
 const CLUE_SERIALIZED_SIZE: usize = 48;
 
-struct ClueAvailablifier {
+struct ClueAvailabilifier {
     avail_backend: AvailabilityBackend,
 }
 
-impl ClueAvailablifier {
-    async fn initialize(availablity_mnemonic: String) -> ClueAvailablifier {
-        ClueAvailablifier {
+impl ClueAvailabilifier {
+    async fn initialize(availablity_mnemonic: String) -> ClueAvailabilifier {
+        ClueAvailabilifier {
             avail_backend: AvailabilityBackend::initialize(availablity_mnemonic).await,
         }
     }
@@ -51,7 +51,7 @@ mod tests {
 
         let n = setup.domain.size();
 
-        let clue_availer = ClueAvailablifier::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string()).await;
+        let clue_availer = ClueAvailabilifier::initialize("load fame ill obtain abandon original demand film nasty account excuse bleak".to_string()).await;
 
         let available_signer = clue_availer.make_available_signer(setup, 0, rng).await;
         println!("signer {} is available at {:x?}", 0, available_signer.1);
