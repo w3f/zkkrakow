@@ -88,7 +88,7 @@ mod tests {
         let block_hash: [u8; 32] = array_bytes::hex2bytes_unchecked("43a01cce887163530ccf6904d46bae9afa795caff947e37a19558e71a1fba3e2").try_into().unwrap();
         let block_hash = H256::from(block_hash);
         let data = test_availablity_net.retrieve_data(block_hash).await;
-        print!("data length {}", data.len());
-        print!("data: {:x?}", data.as_slice());
+        println!("data length {}", data.len());
+        println!("data: {:x?}", data.as_slice());
     }
 }
