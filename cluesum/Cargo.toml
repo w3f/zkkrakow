@@ -1,5 +1,5 @@
 [package]
-name = "zkkrakow"
+name = "cluesum"
 version = "0.1.0"
 edition = "2021"
 authors = ["Syed Lavzani <syed@riseup.net>", "Sergey Vasilyev <swasilyev@gmail.com>"]
@@ -12,9 +12,9 @@ ark-poly = { version = "0.4", default-features = false }
 ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
 
 
-avail-core = {  git = "https://github.com/availproject/avail-core", tag = "node-v2220-rc1", features = ["serde", "runtime"] }
-avail-subxt = { git = "https://github.com/availproject/avail/" }
-avail-base = {git = "https://github.com/availproject/avail/" }
+#avail-core = {  git = "https://github.com/availproject/avail-core", tag = "node-v2220-rc1", features = ["serde", "runtime"] }
+#avail-subxt = { git = "https://github.com/availproject/avail/" }
+#avail-base = {git = "https://github.com/availproject/avail/" }
 
 subxt-signer = "0.34"
 bip39 = { version = "2.0.0", default-features = false }

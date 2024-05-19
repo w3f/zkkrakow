@@ -8,8 +8,8 @@ use ark_poly::univariate::DensePolynomial;
 use ark_std::rand::Rng;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
-pub mod availablity;
-pub mod available_signer;
+// pub mod availablity;
+// pub mod available_signer;
 use ark_std::{test_rng, UniformRand};
 
 // struct Srs<C: Pairing> {
