@@ -341,7 +341,7 @@ impl<C: Pairing> Verifier<C> {
             C::pairing(self.g1, sig.apk_g2)
         );
 
-
+        // TODO: may be verifier just computes the commitment from the bitmask?
         // bitmask verification
         let lis = self.domain.evaluate_all_lagrange_coefficients(sig.z);
         let b_at_z = lis.iter()
